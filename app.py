@@ -14,22 +14,14 @@ CORS(app,
 
 remove_func = None
 
-def init_model():
+def get_remove():
     global remove_func
-    try:
+    if remove_func is None:
         print("Loading rembg model...", flush=True)
-        from rembg import remove
-        remove_func = remove
-        # Warm up model with tiny image
-        tiny = Image.new("RGBA", (10, 10), (255, 0, 0, 255))
-        remove_func(tiny)
-        print("Model loaded and warmed up OK", flush=True)
-    except Exception as e:
-        print(f"Model load FAILED: {e}", flush=True)
-        traceback.print_exc(file=sys.stdout)
-
-# Load model at startup
-init_model()
+        from rembg import remove as _remove
+        remove_func = _remove
+        print("Model loaded OK", flush=True)
+    return remove_func
 
 @app.after_request
 def after_request(response):
@@ -49,13 +41,7 @@ def home():
 @app.route('/api/remove-bg', methods=['POST'])
 def remove_background():
     try:
-        if remove_func is None:
-            init_model()
-            if remove_func is None:
-                return jsonify({
-                    'success': False,
-                    'error': 'Model not loaded'
-                }), 503
+        rm = get_remove()
 
         data = request.get_json()
         if not data or 'image' not in data:
@@ -72,7 +58,7 @@ def remove_background():
         input_image = Image.open(io.BytesIO(image_bytes)).convert("RGBA")
 
         print(f"Processing image: {input_image.size}", flush=True)
-        output_image = remove_func(input_image)
+        output_image = rm(input_image)
         print("Processing done", flush=True)
 
         output_buffer = io.BytesIO()

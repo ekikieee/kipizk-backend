@@ -5,6 +5,7 @@ import io
 import base64
 import sys
 import traceback
+import threading
 
 app = Flask(__name__)
 CORS(app,
@@ -13,15 +14,27 @@ CORS(app,
      methods=["GET", "POST", "OPTIONS"])
 
 remove_func = None
+model_lock = threading.Lock()
+model_ready = threading.Event()
 
-def get_remove():
+def load_model():
     global remove_func
-    if remove_func is None:
-        print("Loading rembg model...", flush=True)
-        from rembg import remove as _remove
+    try:
+        print("Loading rembg u2netp model...", flush=True)
+        from rembg import new_session
+        session = new_session("u2netp")
+        def _remove(img, **kwargs):
+            from rembg import remove as _r
+            return _r(img, session=session, **kwargs)
         remove_func = _remove
         print("Model loaded OK", flush=True)
-    return remove_func
+        model_ready.set()
+    except Exception as e:
+        print(f"Model load FAILED: {e}", flush=True)
+        traceback.print_exc(file=sys.stdout)
+
+# Start loading model in background immediately
+threading.Thread(target=load_model, daemon=True).start()
 
 @app.after_request
 def after_request(response):
@@ -41,7 +54,12 @@ def home():
 @app.route('/api/remove-bg', methods=['POST'])
 def remove_background():
     try:
-        rm = get_remove()
+        # Wait for model (max 120s)
+        if not model_ready.wait(timeout=120):
+            return jsonify({
+                'success': False,
+                'error': 'Model still loading, try again'
+            }), 503
 
         data = request.get_json()
         if not data or 'image' not in data:
@@ -58,7 +76,7 @@ def remove_background():
         input_image = Image.open(io.BytesIO(image_bytes)).convert("RGBA")
 
         print(f"Processing image: {input_image.size}", flush=True)
-        output_image = rm(input_image)
+        output_image = remove_func(input_image)
         print("Processing done", flush=True)
 
         output_buffer = io.BytesIO()
